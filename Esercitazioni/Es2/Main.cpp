@@ -1,0 +1,135 @@
+#include <cmath>
+#include <fstream>
+#include <vector>
+#include <iostream>
+#include <cmath>
+
+#include <TGraph.h>
+#include <TF1.h>
+#include <TCanvas.h>
+#include <TH2D.h>
+#include <TApplication.h>
+#include <TStyle.h>
+
+
+#include "OdeSolver.h"
+#include "Vettore.h"
+#include "PuntoMateriale.h"
+
+/*COMMENTO RISULTATI:
+ Come si vede dai grafici, nel caso del metodo Verlet Velocity il rapporto L/L_0 oscilla tra due valori definiti, molto vicini a 1 (che dipendono dai pianeti considerati) => A*L_0<L<B*L_0 ,
+ con A,B-->1 per il passo h-->0 L=L_0, ovvero il momento angolare si conserva. Nei metodi di Eulero e Runge-Kutta di ordine 2 il rapporto tende a crescere indefinitamente al passare del tempo
+ => L aumento al passare del tempo, non si conserva.*/
+
+using namespace std;
+
+//La funzione calcola la somma dei momenti angolari di tutti i pianeti escluso il sole, prendendo come polo il sole
+Vettore MomentoAngolare(vector <PuntoMateriale> v) {
+    Vettore L;
+    Vettore b;
+    for (unsigned int i = 1; i < v.size(); i++) {
+        b = v[0].R() - v[i].R();
+        L = L + b.Cross(v[i].Massa() * (v[0].V() - v[i].V()));
+    }
+    return L;
+}
+
+Vettore fInterna(unsigned int i, unsigned int j, double t, vector <PuntoMateriale> p) {
+    Vettore forzaG = p[i].Massa() * p[j].CampoGravitazionale(p[i].R());
+    return forzaG;
+}
+
+Vettore fEsterna(unsigned int i, double t, vector <PuntoMateriale> p) {
+    Vettore forzaG(0, 0, 0);
+    return forzaG;
+}
+
+int main() {
+    TApplication app("app", 0, NULL);
+    gStyle->SetOptStat(0);
+
+    //Lettura dei dati dal file
+    double mass;
+    double x, y, z, vx, vy, vz;
+    vector <PuntoMateriale> pm_vector;
+    fstream f("fileInput");
+    while (f >> mass >> vx >> x >> vy >> y >> vz >> z) {
+        Vettore r(x, y, z);
+        Vettore v(vx, vy, vz);
+        PuntoMateriale tmp_pm(mass, 0, r, v);
+        pm_vector.push_back(tmp_pm);
+    }
+    if (pm_vector[0].Massa() != 0.000295912208285591102582) {
+        cout << "Inserire il sole come primo Pianeta!" << endl;
+        return 0;
+    }
+
+    //OdeSolver ode("Eulero", pm_vector);
+    //OdeSolver ode("Rk2", pm_vector);
+    OdeSolver ode("VerletVelocity", pm_vector);
+
+    // Creazione classe OdeSolver (per la soluzione dell'equ. diff.)
+    ode.fInterna = fInterna;
+    ode.fEsterna = fEsterna;
+    ode.Passo(0.5);
+
+    //Creazione dei grafici (uno per pianeta)
+    vector <TGraph> gr(ode.N());
+    TCanvas c("1c", "", 10, 10, 1000, 800);
+    c.Divide(0, 2);
+    c.cd(1);
+    //Preparazione grafico delle coordinate dei pianeti
+    double size = 2; // 5 unita' astronimiche
+
+    gPad->DrawFrame(-size, -size, size, size);
+    int color[10] = {kOrange + 1, kViolet + 1, kGreen + 2, kAzure + 1, kRed + 2, kRed - 7, kCyan - 8, kBlue - 7,
+                     kBlue + 1, kBlue + 2};
+
+    for (unsigned int i = 0; i < ode.N(); i++) {
+
+        gr[i].SetPoint(0, ode.Punto(i).R().X(), ode.Punto(i).R().Y());
+        gr[i].SetMarkerColor(color[i]);
+        gr[i].SetMarkerStyle(20);
+        gr[i].SetMarkerSize(0.3);
+        if (i == 0) gr[i].SetMarkerSize(1.5);
+        gr[i].Draw("P");
+    }
+
+    gPad->Modified();
+    gPad->Update();
+
+    //Preparazione grafico momento angolare
+    Vettore L0(MomentoAngolare(pm_vector));
+    Vettore L;
+    TGraph grL;
+    grL.SetMarkerStyle(20);
+    grL.SetMarkerSize(0.3); /*grL.SetMaximum(0.000001);*/
+
+    //Run del metodo numerico + grafico in tempo reale delle coordinate e del mom. angolare totale
+    int j = 0;
+    while (ode.T() < 1500) {
+        //Aggiorno le coordinate dei pianeti, calcolo in momento angolare totale e stampo un punto ogni 10
+        ode.Cinematica();
+        L = MomentoAngolare(ode.Punti());
+        if (j % 10 == 0) {
+            for (unsigned int i = 1; i < ode.N(); i++) {
+                //STEP 4 riempimento delle grafico gr[i] con le coordinate aggiornate dei pianeti
+                gr[i].SetPoint(gr[i].GetN(), ode.Punto(i).R().X(), ode.Punto(i).R().Y());
+            }
+            //Passo al canvas del momento anolare e stampo il rapporto tra i moduli di L ed L_0
+            c.cd(2);
+            grL.SetPoint(grL.GetN(), ode.T(), L.Mod() / L0.Mod());
+            //cout << L.Mod() / L0.Mod() << endl;
+            grL.Draw("ALP");
+
+            gPad->Modified();
+            gPad->Update();
+
+            //Ripasso al canvas dei pianeti
+            c.cd(1);
+        }
+        j++;
+    }
+    app.Run(true);
+    return 0;
+}

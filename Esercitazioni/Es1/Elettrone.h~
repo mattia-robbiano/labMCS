@@ -1,0 +1,8 @@
+#ifndef _ELETTRONE
+#def _ELETTRONE
+#include "Particella.h"
+class Elettrone: public Particella{
+ public:
+  using Particella::Particella;
+ private:
+};
